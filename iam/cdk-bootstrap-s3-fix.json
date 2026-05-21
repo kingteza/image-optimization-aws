@@ -1,0 +1,11 @@
+{
+  "Sid": "CDKBootstrapS3Extras",
+  "Effect": "Allow",
+  "Action": [
+    "s3:PutBucketVersioning",
+    "s3:PutBucketTagging",
+    "s3:PutBucketOwnershipControls",
+    "s3:PutBucketLogging"
+  ],
+  "Resource": "*"
+}
