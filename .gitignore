@@ -10,3 +10,6 @@ cdk.out
 .DS_Store
 
 package-lock.json
+
+# Local environment (secrets / account-specific config)
+.env
