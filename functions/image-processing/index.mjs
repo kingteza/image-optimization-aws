@@ -30,7 +30,7 @@ export const handler = async (event) => {
         const getOriginalImageCommandOutput = await s3Client.send(getOriginalImageCommand);
         console.log(`Got response from S3 for ${originalImagePath}`);
 
-        originalImageBody = getOriginalImageCommandOutput.Body.transformToByteArray();
+        originalImageBody = await getOriginalImageCommandOutput.Body.transformToByteArray();
         contentType = getOriginalImageCommandOutput.ContentType;
     } catch (error) {
         if (error.name === "NoSuchKey") {
@@ -38,13 +38,27 @@ export const handler = async (event) => {
         }
         return sendError(500, 'Error downloading original image', error);
     }
-    let transformedImage = Sharp(await originalImageBody, { failOn: 'none', animated: true });
-    // Get image orientation to rotate if needed
-    const imageMetadata = await transformedImage.metadata();
+    const originalBytes = Buffer.from(originalImageBody);
+    var timingLog = 'img-download;dur=' + parseInt(performance.now() - startTime);
+
+    let sharpImage;
+    let imageMetadata;
+    try {
+        sharpImage = Sharp(originalBytes, { failOn: 'none', animated: true });
+        imageMetadata = await sharpImage.metadata();
+    } catch (error) {
+        logError('Could not read image metadata, returning original file', error);
+        return serveOriginal(originalBytes, contentType, timingLog);
+    }
+
+    if (!isConvertibleImage(contentType, imageMetadata)) {
+        console.log(`Skipping transform for non-image or unsupported file: ${originalImagePath} (${contentType}, format=${imageMetadata?.format})`);
+        return serveOriginal(originalBytes, contentType, timingLog);
+    }
+
+    let transformedImage = sharpImage;
     // execute the requested operations 
     const operationsJSON = Object.fromEntries(operationsPrefix.split(',').map(operation => operation.split('=')));
-    // variable holding the server timing header value
-    var timingLog = 'img-download;dur=' + parseInt(performance.now() - startTime);
     startTime = performance.now();
     try {
         // check if resizing is requested
@@ -126,6 +140,33 @@ export const handler = async (event) => {
         }
     };
 };
+
+function isConvertibleImage(contentType, metadata) {
+    if (isClearlyNonImageContentType(contentType)) return false;
+    return Boolean(metadata?.format);
+}
+
+function isClearlyNonImageContentType(contentType) {
+    if (!contentType) return false;
+    const normalized = contentType.split(';')[0].trim().toLowerCase();
+    if (normalized.startsWith('image/')) return false;
+    // Unknown binary type may still be an image; let Sharp metadata decide.
+    if (normalized === 'application/octet-stream') return false;
+    return true;
+}
+
+function serveOriginal(originalBytes, contentType, timingLog) {
+    return {
+        statusCode: 200,
+        body: originalBytes.toString('base64'),
+        isBase64Encoded: true,
+        headers: {
+            'Content-Type': contentType || 'application/octet-stream',
+            'Cache-Control': TRANSFORMED_IMAGE_CACHE_TTL,
+            'Server-Timing': timingLog
+        }
+    };
+}
 
 function sendError(statusCode, body, error) {
     logError(body, error);
